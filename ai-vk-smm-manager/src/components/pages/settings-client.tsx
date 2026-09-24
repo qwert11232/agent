@@ -30,7 +30,7 @@ type CheckResult = { ok: boolean; simulated: boolean; message: string };
 
 function CheckLine({ title, res }: { title: string; res: CheckResult }) {
   const Icon = res.ok ? CheckCircle2 : res.simulated ? TriangleAlert : XCircle;
-  const cls = res.ok ? "text-neon border-neon bg-[#0f2018]" : res.simulated ? "text-yellow border-yellow bg-[#211a08]" : "text-red border-red bg-[#220f13]";
+  const cls = res.ok ? "text-neon-dim border-neon bg-[#e9fbf0]" : res.simulated ? "text-yellow-deep border-yellow bg-[#fff7e0]" : "text-red-deep border-red bg-[#ffecec]";
   return (
     <div className={`flex items-start gap-3 border-[3px] px-3 py-2.5 ${cls}`}>
       <Icon size={16} className="mt-0.5 shrink-0" />
@@ -111,9 +111,9 @@ export default function SettingsClient({ initial }: { initial: Settings }) {
     <div className="mx-auto flex max-w-5xl flex-col gap-5">
       {/* ============ AUTOPILOT ============ */}
       <div className={`panel border-l-[10px] ${active ? "border-l-neon" : "border-l-red"} flex flex-wrap items-center gap-4 p-5`}>
-        <Power size={26} className={active ? "text-neon" : "text-red"} />
+        <Power size={26} className={active ? "text-neon-dim" : "text-red-deep"} />
         <div className="min-w-0 flex-1">
-          <p className={`font-display text-[11px] uppercase tracking-widest ${active ? "text-neon" : "text-red"}`}>
+          <p className={`font-display text-[11px] uppercase tracking-widest ${active ? "text-neon-dim" : "text-red-deep"}`}>
             Автопостинг {active ? "включён" : "выключен"}
           </p>
           <p className="text-base text-muted">
@@ -167,7 +167,7 @@ export default function SettingsClient({ initial }: { initial: Settings }) {
             Проверить токены
           </button>
           <span className="flex items-center gap-2 text-base text-muted">
-            <ShieldCheck size={14} className="text-neon" />
+            <ShieldCheck size={14} className="text-neon-dim" />
             Проверка идёт через VK groups.getById и /models у провайдера AI
           </span>
         </div>
@@ -214,7 +214,7 @@ export default function SettingsClient({ initial }: { initial: Settings }) {
       {/* ============ SCHEDULE ============ */}
       <Panel title="Расписание постов" icon={CalendarClock}>
         <p className="mb-3 text-base text-muted">
-          Слоты времени в формате ЧЧ:ММ — до 6 штук. По наступлении слота бот
+          Слоты времени в формате ЧЧ:ММ — до 10 штук. По наступлении слота бот
           публикует готовый черновик или генерирует новый.
         </p>
         <div className="flex flex-wrap items-center gap-3">
@@ -224,18 +224,18 @@ export default function SettingsClient({ initial }: { initial: Settings }) {
                 type="time"
                 value={t}
                 onChange={(e) => setTime(i, e.target.value)}
-                className="bg-transparent px-3 py-2.5 font-display text-[11px] text-neon outline-none [color-scheme:dark]"
+                className="bg-transparent px-3 py-2.5 font-display text-[11px] text-neon-dim outline-none"
               />
               <button
                 onClick={() => setTimes((arr) => arr.filter((_, idx) => idx !== i))}
-                className="border-l-[3px] border-line px-2.5 py-2.5 text-red hover:bg-panel2"
+                className="border-l-[3px] border-line px-2.5 py-2.5 text-red-deep hover:bg-panel2"
                 title="Удалить слот"
               >
                 <Trash2 size={14} />
               </button>
             </span>
           ))}
-          {times.length < 6 ? (
+          {times.length < 10 ? (
             <button onClick={() => setTimes((arr) => [...arr, "12:00"])} className="btn btn-sm btn-ghost">
               <Plus size={13} /> Слот
             </button>
@@ -250,7 +250,7 @@ export default function SettingsClient({ initial }: { initial: Settings }) {
           Сохранить настройки
         </button>
         {saved ? (
-          <span className="badge bg-neon-dim text-[#04140b] popin">
+          <span className="badge bg-[#34d576] text-[#05340f] popin">
             <span className="led" /> СОХРАНЕНО В POSTGRES
           </span>
         ) : null}

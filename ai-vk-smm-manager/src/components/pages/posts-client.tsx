@@ -63,7 +63,7 @@ function PostCard({
         {long ? (
           <button
             onClick={() => setExpanded((v) => !v)}
-            className="mt-1 font-display text-[8px] uppercase tracking-widest text-cyan hover:text-neon"
+            className="mt-1 font-display text-[8px] uppercase tracking-widest text-cyan-deep hover:text-neon-dim"
           >
             {expanded ? "Свернуть ▲" : "Показать весь ▼"}
           </button>
@@ -72,10 +72,10 @@ function PostCard({
         {post.status === "published" ? (
           <div className="mt-3 grid grid-cols-4 gap-2 border-t-[3px] border-line pt-3 text-center">
             {[
-              { icon: Heart, v: post.likes, c: "text-pink" },
-              { icon: MessageSquare, v: post.comments, c: "text-cyan" },
-              { icon: Eye, v: post.views, c: "text-yellow" },
-              { icon: Repeat2, v: post.reposts, c: "text-neon" },
+              { icon: Heart, v: post.likes, c: "text-pink-deep" },
+              { icon: MessageSquare, v: post.comments, c: "text-cyan-deep" },
+              { icon: Eye, v: post.views, c: "text-yellow-deep" },
+              { icon: Repeat2, v: post.reposts, c: "text-neon-dim" },
             ].map((s, i) => (
               <div key={i} className="flex flex-col items-center gap-1 border-r-2 border-line/40 last:border-0">
                 <s.icon size={14} className={s.c} />
@@ -139,20 +139,26 @@ export default function PostsClient({
   const [genBusy, setGenBusy] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [count, setCount] = useState(1);
 
-  async function generate() {
+  async function generate(n = count) {
     setGenBusy(true);
     setNotice(null);
     try {
       const res = await fetch("/api/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: topic || undefined }),
+        body: JSON.stringify({ topic: topic || undefined, count: n }),
       });
-      const data = (await res.json()) as { post: Post };
-      setPosts((p) => [data.post, ...p]);
+      const data = (await res.json()) as { post: Post; posts?: Post[] };
+      const created = data.posts ?? [data.post];
+      setPosts((p) => [...created.slice().reverse(), ...p]);
       setTopic("");
-      setNotice(`Черновик #${data.post.id} готов — проверьте и публикуйте.`);
+      setNotice(
+        created.length > 1
+          ? `Готово: создано ${created.length} черновиков — проверьте и публикуйте.`
+          : `Черновик #${created[0].id} готов — проверьте и публикуйте.`,
+      );
       router.refresh();
     } finally {
       setGenBusy(false);
@@ -205,33 +211,50 @@ export default function PostsClient({
             <input
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && generate()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void generate();
+              }}
               placeholder="Тема поста (необязательно) — например: «новая фича продукта»"
               className="pixel-input"
             />
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="font-display text-[8px] uppercase tracking-widest text-muted">
+                Сколько постов:
+              </span>
+              {[1, 3, 5, 10].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setCount(n)}
+                  className={`btn btn-sm ${count === n ? "btn-violet" : "btn-ghost"}`}
+                >
+                  {n}
+                </button>
+              ))}
+              <span className="text-sm text-muted">максимум 10 за раз</span>
+            </div>
             <p className="mt-2 text-base text-muted">
-              <CornerDownRight size={13} className="mr-1 inline text-neon" />
+              <CornerDownRight size={13} className="mr-1 inline text-neon-dim" />
               Промпт: «Ты SMM-менеджер группы ВК» + ваша инструкция + тон
-              <span className="text-cyan"> «{TONE_LABEL[tone] ?? tone}»</span> + пост
+              <span className="text-cyan-deep"> «{TONE_LABEL[tone] ?? tone}»</span> + пост
               150–250 слов с эмодзи и хештегами → статус
-              <span className="text-cyan"> draft</span>.
+              <span className="text-cyan-deep"> draft</span>.
             </p>
           </div>
           <div className="flex shrink-0 flex-col gap-3 md:w-64">
-            <button onClick={generate} disabled={genBusy} className="btn btn-neon h-full min-h-12">
+            <button onClick={() => void generate()} disabled={genBusy} className="btn btn-neon h-full min-h-12">
               {genBusy ? <PixelLoader label="Генерация" /> : (
                 <>
-                  <Wand2 size={15} /> Сгенерировать
+                  <Wand2 size={15} /> Сгенерировать{count > 1 ? ` ×${count}` : ""}
                 </>
               )}
             </button>
-            <button onClick={() => generate()} disabled={genBusy} className="btn btn-ghost" title="Сгенерировать ещё один вариант">
+            <button onClick={() => void generate(1)} disabled={genBusy} className="btn btn-ghost" title="Сгенерировать ещё один вариант">
               <Dices size={14} /> Ещё вариант
             </button>
           </div>
         </div>
         {notice ? (
-          <div className="mt-3 border-[3px] border-neon bg-[#0f2018] px-4 py-2.5 font-display text-[9px] uppercase tracking-wider text-neon">
+          <div className="mt-3 border-[3px] border-neon bg-[#e9fbf0] px-4 py-2.5 font-display text-[9px] uppercase tracking-wider text-neon-dim">
             ▶ {notice}
           </div>
         ) : null}

@@ -3,11 +3,7 @@ import type { ReactNode } from "react";
 import { Pixelify_Sans, Press_Start_2P } from "next/font/google";
 import "./globals.css";
 import { Shell } from "@/components/shell";
-import {
-  getSettings,
-  seedAnalyticsIfEmpty,
-  seedWelcomeChatIfEmpty,
-} from "@/lib/core";
+import { getSettings, seedWelcomeChatIfEmpty } from "@/lib/core";
 
 const pressStart = Press_Start_2P({
   weight: "400",
@@ -34,7 +30,6 @@ export default async function RootLayout({
   children: ReactNode;
 }) {
   const s = await getSettings();
-  await seedAnalyticsIfEmpty();
   await seedWelcomeChatIfEmpty();
 
   return (

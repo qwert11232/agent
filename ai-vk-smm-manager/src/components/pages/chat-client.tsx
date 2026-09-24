@@ -75,7 +75,7 @@ export default function ChatClient({
             <span>
               <span className="block text-ink">BOT-9000</span>
               <span className="flex items-center gap-1.5 text-[8px] normal-case tracking-normal text-muted">
-                <span className="h-1.5 w-1.5 bg-neon blink" /> онлайн · группа {groupId || "demo"}
+                <span className="h-1.5 w-1.5 bg-neon-dim blink" /> онлайн · группа {groupId || "demo"}
               </span>
             </span>
           </span>
@@ -128,7 +128,7 @@ export default function ChatClient({
               key={q}
               onClick={() => send(q)}
               disabled={pending}
-              className="border-2 border-line bg-panel2 px-2.5 py-1 text-sm text-muted transition-colors hover:border-neon hover:text-neon disabled:opacity-40"
+              className="border-2 border-line bg-panel2 px-2.5 py-1 text-sm text-muted transition-colors hover:border-neon-dim hover:text-neon-dim disabled:opacity-40"
             >
               {q}
             </button>

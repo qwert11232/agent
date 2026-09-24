@@ -78,7 +78,7 @@ function Countdown({ schedule }: { schedule: string }) {
   }, [schedule]);
   return (
     <span>
-      <span className="block font-display text-2xl leading-8 text-cyan tabular-nums">
+      <span className="block font-display text-2xl leading-8 text-cyan-deep tabular-nums">
         {label}
       </span>
       <span className="text-base text-muted">
@@ -103,20 +103,7 @@ export default function DashboardClient({
   const [active, setActive] = useState(settings.active);
   const [busyToggle, setBusyToggle] = useState(false);
   const [busyGen, setBusyGen] = useState(false);
-
-  // Тик автопостинга каждые 45 секунд — заменяет cron в serverless-среде.
-  useEffect(() => {
-    const id = setInterval(async () => {
-      try {
-        const res = await fetch("/api/tick", { method: "POST" });
-        const data = (await res.json()) as { ran?: boolean };
-        if (data.ran) router.refresh();
-      } catch {
-        /* ignore */
-      }
-    }, 45_000);
-    return () => clearInterval(id);
-  }, [router]);
+  // Тик планировщика делает глобальный AutopilotPoller в шелле (каждые 30 с).
 
   async function toggle() {
     setBusyToggle(true);
@@ -151,7 +138,7 @@ export default function DashboardClient({
       {/* ============ HERO ============ */}
       <div className="panel panel-bright relative overflow-hidden">
         <div className="absolute right-0 top-0 hidden h-full w-1/2 opacity-25 md:block">
-          <div className="h-full w-full bg-[repeating-linear-gradient(90deg,transparent_0_10px,rgba(92,225,255,0.25)_10px_11px)]" />
+          <div className="h-full w-full bg-[repeating-linear-gradient(90deg,transparent_0_10px,rgba(124,92,255,0.22)_10px_11px)]" />
         </div>
         <div className="relative flex flex-col gap-6 p-5 md:flex-row md:items-center md:p-7">
           <div className="floaty relative h-28 w-28 shrink-0 overflow-hidden border-[3px] border-linebright bg-bg md:h-36 md:w-36">
@@ -171,7 +158,7 @@ export default function DashboardClient({
             </p>
             <h2
               className={`font-display text-xl leading-8 md:text-2xl md:leading-9 ${
-                active ? "text-neon" : "text-red"
+                active ? "text-neon-dim" : "text-red-deep"
               }`}
             >
               {active ? "БОТ АКТИВЕН" : "БОТ НА ПАУЗЕ"}
@@ -247,9 +234,11 @@ export default function DashboardClient({
               <Activity size={14} /> Обновить аналитику
             </Link>
             <div className="mt-1 border-[3px] border-line bg-bg p-3 text-base leading-6 text-muted">
-              <TerminalSquare size={13} className="mr-2 inline text-neon" />
+              <TerminalSquare size={13} className="mr-2 inline text-neon-dim" />
               Автопостинг: по наступлении слота бот берёт готовый черновик или
-              генерирует новый и публикует через <span className="text-cyan">wall.post</span>.
+              генерирует новый и публикует через <span className="text-cyan-deep">wall.post</span>.
+              Пока открыта любая страница панели — тик идёт каждые 30 с, пропущенные
+              слоты догоняются. Для работы 24/7 настройте внешний пингер — см. README.
             </div>
           </div>
         </Panel>
@@ -273,11 +262,11 @@ export default function DashboardClient({
                 >
                   <span className="mt-0.5 shrink-0">
                     {a.status === "error" ? (
-                      <AlertTriangle size={15} className="text-red" />
+                      <AlertTriangle size={15} className="text-red-deep" />
                     ) : a.status === "info" ? (
-                      <Info size={15} className="text-cyan" />
+                      <Info size={15} className="text-cyan-deep" />
                     ) : (
-                      <CheckCircle2 size={15} className="text-neon" />
+                      <CheckCircle2 size={15} className="text-neon-dim" />
                     )}
                   </span>
                   <span className="min-w-0 flex-1">
@@ -303,7 +292,7 @@ export default function DashboardClient({
         right={
           <Link
             href="/posts"
-            className="font-display text-[8px] uppercase tracking-widest text-neon hover:text-ink"
+            className="font-display text-[8px] uppercase tracking-widest text-neon-dim hover:text-ink"
           >
             Все посты →
           </Link>
@@ -321,7 +310,7 @@ export default function DashboardClient({
               <Link
                 key={p.id}
                 href="/posts"
-                className="group border-[3px] border-line bg-panel2 p-4 transition-colors hover:border-neon"
+                className="group border-[3px] border-line bg-panel2 p-4 transition-colors hover:border-neon-dim"
               >
                 <div className="mb-2 flex items-center gap-2">
                   <StatusBadge status={p.status} />
@@ -335,8 +324,8 @@ export default function DashboardClient({
                 </p>
                 {p.status === "published" ? (
                   <div className="mt-2 flex gap-4 text-sm text-muted">
-                    <span className="flex items-center gap-1"><Heart size={12} className="text-pink" /> {p.likes}</span>
-                    <span className="flex items-center gap-1"><Eye size={12} className="text-yellow" /> {p.views}</span>
+                    <span className="flex items-center gap-1"><Heart size={12} className="text-pink-deep" /> {p.likes}</span>
+                    <span className="flex items-center gap-1"><Eye size={12} className="text-yellow-deep" /> {p.views}</span>
                   </div>
                 ) : null}
               </Link>

@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
 const NAV = [
@@ -51,6 +51,29 @@ function Clock() {
   return <span className="tabular-nums">{now}</span>;
 }
 
+/** Глобальный автопилот: любая открытая страница панели тикает планировщик. */
+function AutopilotPoller() {
+  const router = useRouter();
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const res = await fetch("/api/tick", { method: "POST" });
+        const data = (await res.json()) as { ran?: boolean };
+        if (data.ran) router.refresh();
+      } catch {
+        /* offline? retry next tick */
+      }
+    };
+    const id = setInterval(run, 30_000);
+    const first = setTimeout(run, 5_000);
+    return () => {
+      clearInterval(id);
+      clearTimeout(first);
+    };
+  }, [router]);
+  return null;
+}
+
 export function Shell({
   active,
   children,
@@ -63,6 +86,7 @@ export function Shell({
 
   return (
     <div className="relative z-10 flex h-dvh flex-col md:flex-row">
+      <AutopilotPoller />
       {/* ============ SIDEBAR ============ */}
       <aside className="hidden w-60 shrink-0 flex-col border-r-[3px] border-line bg-panel md:flex">
         <Link
@@ -96,14 +120,14 @@ export function Shell({
                 href={item.href}
                 className={`group flex items-center gap-3 border-[3px] px-3 py-2.5 font-display text-[9px] uppercase tracking-wider transition-all ${
                   isActive
-                    ? "border-black bg-neon-dim text-[#04140b] shadow-[4px_4px_0_0_rgba(2,4,10,0.7)]"
+                    ? "border-ink bg-[#34d576] text-[#05340f] shadow-[4px_4px_0_0_var(--color-ink)]"
                     : "border-transparent text-muted hover:border-line hover:bg-panel2 hover:text-ink"
                 }`}
               >
                 <Icon
                   size={15}
                   strokeWidth={2.4}
-                  className={isActive ? "" : "text-linebright group-hover:text-neon"}
+                  className={isActive ? "" : "text-linebright group-hover:text-neon-dim"}
                 />
                 {item.label}
                 {isActive && <span className="ml-auto blink">▮</span>}
@@ -125,7 +149,7 @@ export function Shell({
               />
               <span
                 className={`font-display text-[9px] uppercase ${
-                  active ? "text-neon" : "text-red"
+                  active ? "text-neon-dim" : "text-red-deep"
                 }`}
               >
                 {active ? "Active" : "Standby"}
@@ -144,7 +168,7 @@ export function Shell({
       {/* ============ MAIN COLUMN ============ */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-3 border-b-[3px] border-line bg-panel px-4 py-3">
-          <span className="font-display text-[10px] uppercase tracking-widest text-neon">
+          <span className="font-display text-[10px] uppercase tracking-widest text-neon-dim">
             {"//"}
           </span>
           <h1 className="font-display text-[10px] uppercase tracking-widest text-ink">
@@ -155,18 +179,18 @@ export function Shell({
             <div className="marquee-track font-display text-[8px] uppercase tracking-widest text-muted">
               {[...TICKER, ...TICKER].map((t, i) => (
                 <span key={i} className="flex items-center gap-2 whitespace-nowrap">
-                  <span className="text-cyan">▸</span> {t}
+                  <span className="text-cyan-deep">▸</span> {t}
                 </span>
               ))}
             </div>
           </div>
 
           <div className="ml-auto flex items-center gap-3">
-            <span className="hidden items-center gap-2 border-[3px] border-line bg-bg px-3 py-1.5 font-display text-[9px] text-cyan sm:flex">
+            <span className="hidden items-center gap-2 border-[3px] border-line bg-bg px-3 py-1.5 font-display text-[9px] text-cyan-deep sm:flex">
               <Clock />
             </span>
             <span
-              className={`badge ${active ? "bg-neon-dim text-[#04140b]" : "bg-red text-[#ffe6ea]"}`}
+              className={`badge ${active ? "bg-[#34d576] text-[#05340f]" : "bg-[#fa7a7a] text-[#530a0a]"}`}
             >
               <span className="led" />
               {active ? "Online" : "Paused"}
@@ -180,7 +204,7 @@ export function Shell({
 
         <footer className="hidden items-center gap-4 border-t-[3px] border-line bg-panel px-4 py-2 font-display text-[8px] uppercase tracking-widest text-muted md:flex">
           <span className="flex items-center gap-2">
-            <Bot size={12} className="text-neon" /> BOT-9000 core v1.0
+            <Bot size={12} className="text-neon-dim" /> BOT-9000 core v1.0
           </span>
           <span>mem: 64k ok</span>
           <span className="hidden xl:inline">db: postgres/online</span>
@@ -198,7 +222,7 @@ export function Shell({
               key={item.href}
               href={item.href}
               className={`flex flex-1 flex-col items-center gap-1 py-2.5 ${
-                isActive ? "bg-panel2 text-neon" : "text-muted"
+                isActive ? "bg-panel3 text-neon-dim" : "text-muted"
               }`}
             >
               <Icon size={18} strokeWidth={2.4} />

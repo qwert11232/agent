@@ -243,17 +243,7 @@ export async function fetchVkPostStats(
   }
 }
 
-/** Прирост статистики в demo-режиме (когда боевого токена нет). */
-export function simulateStatsTick(post: {
-  views: number;
-  likes: number;
-  comments: number;
-  reposts: number;
-}) {
-  const viewsInc = rand(35, 420);
-  const views = post.views + viewsInc;
-  const likes = Math.min(views, post.likes + rand(0, Math.max(1, Math.round(viewsInc * 0.09))));
-  const comments = post.comments + rand(0, 4);
-  const reposts = post.reposts + rand(0, 3);
-  return { views, likes, comments, reposts };
-}
+/**
+ * Симуляция метрик удалена намеренно: показываем только реальные данные VK.
+ * Без боевого токена метрики остаются нулевыми, а UI сообщает, что нужен токен.
+ */

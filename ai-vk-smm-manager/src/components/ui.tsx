@@ -34,13 +34,13 @@ export function Panel({
 
 /* ---------- Badge ---------- */
 const BADGE_TONES: Record<string, string> = {
-  neon: "bg-neon-dim text-[#04140b]",
-  pink: "bg-[#a33785] text-[#ffe9f8]",
-  yellow: "bg-[#b7943a] text-[#241a05]",
-  cyan: "bg-[#2e84a0] text-[#e9fbff]",
-  red: "bg-[#a83340] text-[#ffe6ea]",
-  violet: "bg-[#5a4bd1] text-[#eeebff]",
-  ghost: "bg-panel2 text-muted",
+  neon: "bg-[#34d576] text-[#05340f]",
+  pink: "bg-[#f983c0] text-[#54062f]",
+  yellow: "bg-[#fbcb45] text-[#4a3000]",
+  cyan: "bg-[#56cdee] text-[#05384a]",
+  red: "bg-[#fa7a7a] text-[#530a0a]",
+  violet: "bg-[#b9a6ff] text-[#26136b]",
+  ghost: "bg-panel3 text-muted",
 };
 
 export function Badge({
@@ -69,12 +69,12 @@ export function StatusBadge({ status }: { status: string }) {
 
 /* ---------- Stat block ---------- */
 const STAT_COLORS: Record<string, string> = {
-  neon: "text-neon border-neon",
-  pink: "text-pink border-pink",
-  yellow: "text-yellow border-yellow",
-  cyan: "text-cyan border-cyan",
-  violet: "text-[#a99bff] border-violet",
-  red: "text-red border-red",
+  neon: "text-neon-dim border-neon",
+  pink: "text-pink-deep border-pink",
+  yellow: "text-yellow-deep border-yellow",
+  cyan: "text-cyan-deep border-cyan",
+  violet: "text-violet-deep border-violet",
+  red: "text-red-deep border-red",
 };
 
 export function StatBlock({

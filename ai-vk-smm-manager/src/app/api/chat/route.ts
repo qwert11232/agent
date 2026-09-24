@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
     likes: published.reduce((a, p) => a + p.likes, 0),
     comments: published.reduce((a, p) => a + p.comments, 0),
     views: published.reduce((a, p) => a + p.views, 0),
-    followers: liveFollowers ?? (todayRow ?? lastRow)?.followers ?? 1211,
+    followers: liveFollowers ?? (todayRow ?? lastRow)?.followers ?? 0,
     followersSource: liveFollowers != null ? "vk-live" : "db",
     groupName,
     active: s.active,

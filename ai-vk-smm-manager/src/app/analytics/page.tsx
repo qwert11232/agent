@@ -2,13 +2,20 @@ import { asc } from "drizzle-orm";
 import { db } from "@/db";
 import { analytics, posts } from "@/db/schema";
 import AnalyticsClient from "@/components/pages/analytics-client";
-import { ensureSchema, seedAnalyticsIfEmpty, todayKey } from "@/lib/core";
+import { refreshAllStats } from "@/lib/actions";
+import { ensureSchema, getSettings, todayKey } from "@/lib/core";
+import { isRealVkToken } from "@/lib/vk";
 
 export const dynamic = "force-dynamic";
 
 export default async function AnalyticsPage() {
   await ensureSchema();
-  await seedAnalyticsIfEmpty();
+  const s = await getSettings();
+  const connected = isRealVkToken(s.vkToken) && Boolean(s.groupId);
+
+  // Тянем свежие метрики из VK при каждом открытии страницы.
+  if (connected) await refreshAllStats({ silent: true });
+
   const [allPosts, rows] = await Promise.all([
     db.select().from(posts),
     db.select().from(analytics).orderBy(asc(analytics.date)),
@@ -16,13 +23,15 @@ export default async function AnalyticsPage() {
 
   const published = allPosts
     .filter((p) => p.status === "published")
-    .sort((a, b) => (b.likes + b.views) - (a.likes + a.views));
+    .sort((a, b) => b.likes + b.views - (a.likes + a.views));
   const series = rows.slice(-14);
   const todayRow = series.find((r) => r.date === todayKey()) ?? series.at(-1);
   const prevRow = series[series.length - 2] ?? todayRow;
 
   return (
     <AnalyticsClient
+      connected={connected}
+      groupId={s.groupId}
       totals={{
         posts: allPosts.length,
         published: published.length,

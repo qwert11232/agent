@@ -1,12 +1,12 @@
 import { and, asc, desc, eq, gte } from "drizzle-orm";
-import { db } from "@/db";
+import { db, pool } from "@/db";
 import { analytics, posts } from "@/db/schema";
 import { getSettings, logActivity, rand, todayKey } from "./core";
 import { generateVkPost } from "./gpt";
 import {
   fetchVkGroupInfo,
   fetchVkPostStats,
-  simulateStatsTick,
+  isRealVkToken,
   vkPublishPost,
 } from "./vk";
 
@@ -45,17 +45,7 @@ export async function publishPostById(id: number, opts?: { auto?: boolean }) {
     throw new Error(res.error ?? "VK API error");
   }
 
-  // При реальной публикации метрики стартуют с нуля (дальше подтянутся из VK).
-  // В demo-режиме сразу сидим правдоподобные числа для живых графиков.
-  const demoViews = rand(120, 950);
-  const stats = res.simulated
-    ? {
-        views: demoViews,
-        likes: Math.round(demoViews * (0.05 + Math.random() * 0.08)),
-        comments: rand(0, 9),
-        reposts: rand(0, 6),
-      }
-    : { views: 0, likes: 0, comments: 0, reposts: 0 };
+  // Метрики всегда стартуют с нуля и наполняются реальными данными из VK.
   const updated = (
     await db
       .update(posts)
@@ -63,7 +53,10 @@ export async function publishPostById(id: number, opts?: { auto?: boolean }) {
         status: "published",
         vkPostId: res.postId,
         publishedAt: new Date(),
-        ...stats,
+        views: 0,
+        likes: 0,
+        comments: 0,
+        reposts: 0,
       })
       .where(eq(posts.id, id))
       .returning()
@@ -91,38 +84,69 @@ export function parseSchedule(scheduleTimes: string) {
     .sort((a, b) => a.h * 60 + a.m - (b.h * 60 + b.m));
 }
 
-/** Тик автопостинга: если слот расписания наступил и поста в нём нет — генерируем/публикуем. */
+const TICK_LOCK_KEY = 707001;
+
+/**
+ * Тик автопостинга: если слот расписания наступил и поста в нём нет —
+ * берём старший черновик (или генерируем новый) и публикуем.
+ * pg advisory lock защищает от дублей при параллельных тиках
+ * (несколько вкладок + внешний пингер одновременно).
+ * SCHEDULE_TZ задаёт таймзону расписания (на хостингах сервер обычно в UTC).
+ */
 export async function runTickIfDue() {
-  const s = await getSettings();
-  if (!s.active) return { ran: false as const, reason: "paused" as const };
+  const client = await pool.connect();
+  try {
+    const lock = await client.query<{ ok: boolean }>(
+      `SELECT pg_try_advisory_lock(${TICK_LOCK_KEY}) AS ok`,
+    );
+    if (!lock.rows[0]?.ok) return { ran: false as const, reason: "locked" as const };
 
-  const slots = parseSchedule(s.scheduleTimes);
-  const now = new Date();
-  for (const slot of slots) {
-    const slotStart = new Date(now);
-    slotStart.setHours(slot.h, slot.m, 0, 0);
-    if (now < slotStart) continue;
+    const s = await getSettings();
+    if (!s.active) return { ran: false as const, reason: "paused" as const };
 
-    const posted = await db
-      .select({ id: posts.id })
-      .from(posts)
-      .where(and(eq(posts.status, "published"), gte(posts.publishedAt, slotStart)))
-      .limit(1);
-    if (posted.length) continue;
+    const tz = process.env.SCHEDULE_TZ;
+    const now = new Date();
+    const zNow = tz
+      ? new Date(now.toLocaleString("en-US", { timeZone: tz }))
+      : now;
+    const tzShiftMs = zNow.getTime() - now.getTime();
 
-    const draft = (
-      await db
-        .select()
+    const slots = parseSchedule(s.scheduleTimes);
+    for (const slot of slots) {
+      const slotStartZoned = new Date(zNow);
+      slotStartZoned.setHours(slot.h, slot.m, 0, 0);
+      if (zNow < slotStartZoned) continue;
+      // Реальная (UTC) граница слота для сравнения с publishedAt.
+      const slotStart = new Date(slotStartZoned.getTime() - tzShiftMs);
+
+      const posted = await db
+        .select({ id: posts.id })
         .from(posts)
-        .where(eq(posts.status, "draft"))
-        .orderBy(asc(posts.id))
-        .limit(1)
-    )[0];
-    const target = draft ?? (await generateDraft());
-    const published = await publishPostById(target.id, { auto: true });
-    return { ran: true as const, slot: slot.raw, postId: published.id };
+        .where(and(eq(posts.status, "published"), gte(posts.publishedAt, slotStart)))
+        .limit(1);
+      if (posted.length) continue;
+
+      const draft = (
+        await db
+          .select()
+          .from(posts)
+          .where(eq(posts.status, "draft"))
+          .orderBy(asc(posts.id))
+          .limit(1)
+      )[0];
+      const target = draft ?? (await generateDraft());
+      const published = await publishPostById(target.id, { auto: true });
+      return { ran: true as const, slot: slot.raw, postId: published.id };
+    }
+    return { ran: false as const, reason: "no-slot-due" as const };
+  } finally {
+    try {
+      await client.query(`SELECT pg_advisory_unlock(${TICK_LOCK_KEY})`);
+    } catch {
+      /* no-op */
+    }
+    client.release();
   }
-  return { ran: false as const, reason: "no-slot-due" as const };
 }
 
 /** Ближайший слот расписания (сегодня или завтра). */
@@ -143,11 +167,24 @@ export function nextSlotInfo(scheduleTimes: string) {
 }
 
 /**
- * Обновление статистики: с боевым VK-токеном — реальные данные из группы
- * (wall.getById + members_count), иначе demo-симуляция.
+ * Обновление статистики ТОЛЬКО реальными данными из VK
+ * (wall.getById по постам + members_count по группе).
+ * Без боевого токена ничего не выдумываем — метрики остаются нулевыми.
  */
 export async function refreshAllStats(opts?: { silent?: boolean }) {
   const s = await getSettings();
+  const connected = isRealVkToken(s.vkToken) && Boolean(s.groupId.replace(/[^0-9]/g, ""));
+  if (!connected) {
+    if (!opts?.silent) {
+      await logActivity(
+        "СТАТИСТИКА НЕ ОБНОВЛЕНА",
+        "Не задан VK Access Token или Group ID — реальные метрики недоступны.",
+        "info",
+      );
+    }
+    return { real: false, followers: null, updated: 0 };
+  }
+
   const published = await db
     .select()
     .from(posts)
@@ -165,13 +202,9 @@ export async function refreshAllStats(opts?: { silent?: boolean }) {
   let realApplied = 0;
   for (const p of published) {
     const real = p.vkPostId ? realStats?.get(p.vkPostId) : undefined;
-    if (real) {
-      await db.update(posts).set(real).where(eq(posts.id, p.id));
-      realApplied++;
-    } else {
-      const next = simulateStatsTick(p);
-      await db.update(posts).set(next).where(eq(posts.id, p.id));
-    }
+    if (!real) continue; // нет данных из VK → оставляем как есть, не выдумываем
+    await db.update(posts).set(real).where(eq(posts.id, p.id));
+    realApplied++;
   }
 
   const totals = await db.select().from(posts).where(eq(posts.status, "published"));
@@ -192,10 +225,9 @@ export async function refreshAllStats(opts?: { silent?: boolean }) {
       })
       .where(eq(analytics.date, today));
   } else {
-    const last = (await db.select().from(analytics).orderBy(desc(analytics.date)).limit(1))[0];
     await db.insert(analytics).values({
       date: today,
-      followers: groupInfo?.followers ?? (last?.followers ?? 1211) + rand(4, 24),
+      followers: groupInfo?.followers ?? 0,
       totalLikes,
       totalComments,
       postsCount,
@@ -203,13 +235,12 @@ export async function refreshAllStats(opts?: { silent?: boolean }) {
   }
 
   if (!opts?.silent) {
-    const mode = realStats ? `VK wall.getById · реальных ${realApplied}` : "demo-симуляция";
     await logActivity(
       "СТАТИСТИКА ОБНОВЛЕНА",
-      `Постов обработано: ${published.length} (${mode})${groupInfo?.followers != null ? `, подписчиков: ${groupInfo.followers}` : ""}.`,
+      `VK wall.getById: обновлено постов ${realApplied} из ${published.length}${groupInfo?.followers != null ? `, подписчиков: ${groupInfo.followers}` : ""}.`,
       "info",
     );
   }
 
-  return { real: Boolean(realStats), followers: groupInfo?.followers ?? null };
+  return { real: true, followers: groupInfo?.followers ?? null, updated: realApplied };
 }

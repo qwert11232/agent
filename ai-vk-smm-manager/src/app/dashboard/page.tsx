@@ -16,7 +16,7 @@ export default async function DashboardPage() {
   ]);
 
   const published = allPosts.filter((p) => p.status === "published");
-  const followers = lastAnalytics[0]?.followers ?? 1211;
+  const followers = lastAnalytics[0]?.followers ?? 0;
   const followersDelta =
     (lastAnalytics[0]?.followers ?? 0) - (lastAnalytics[1]?.followers ?? 0);
 

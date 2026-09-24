@@ -15,14 +15,21 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const current = await getSettings();
 
-  const times = String(body.scheduleTimes ?? "")
-    .split(",")
-    .map((t) => t.trim())
-    .filter((t) => /^\d{1,2}:\d{2}$/.test(t))
-    .map((t) => {
-      const [h, m] = t.split(":").map(Number);
-      return `${String(Math.min(23, h)).padStart(2, "0")}:${String(Math.min(59, m)).padStart(2, "0")}`;
-    });
+  // До 10 слотов автопостинга в сутки, дубли схлопываем, сортируем по времени.
+  const times = [
+    ...new Set(
+      String(body.scheduleTimes ?? "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => /^\d{1,2}:\d{2}$/.test(t))
+        .map((t) => {
+          const [h, m] = t.split(":").map(Number);
+          return `${String(Math.min(23, h)).padStart(2, "0")}:${String(Math.min(59, m)).padStart(2, "0")}`;
+        }),
+    ),
+  ]
+    .sort()
+    .slice(0, 10);
 
   const tone = ["friendly", "business", "funny"].includes(String(body.tone))
     ? String(body.tone)

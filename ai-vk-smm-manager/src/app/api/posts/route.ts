@@ -14,10 +14,26 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  await ensureSchema();
   const body = (await req.json().catch(() => ({}))) as {
     topic?: string;
     text?: string;
+    count?: number;
   };
+
+  // Пакетная генерация: до 10 черновиков за раз.
+  const count = Math.min(Math.max(Number(body.count ?? 1) || 1, 1), 10);
+  if (count > 1 && !body.text?.trim()) {
+    const created = [];
+    for (let i = 0; i < count; i++) {
+      created.push(await generateDraft(body.topic));
+    }
+    await logActivity(
+      "ПАКЕТНАЯ ГЕНЕРАЦИЯ",
+      `Создано черновиков: ${created.length} (до 10 за раз).`,
+    );
+    return NextResponse.json({ posts: created, post: created[0], mode: "batch" });
+  }
 
   if (body.text?.trim()) {
     const row = (

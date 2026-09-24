@@ -107,26 +107,10 @@ export async function logActivity(
   await db.insert(activityLog).values({ action, details, status });
 }
 
-/** 14 дней истории для красивых графиков на старте. */
-export async function seedAnalyticsIfEmpty() {
-  const c = await db.select({ count: sql<number>`count(*)::int` }).from(analytics);
-  if (Number(c[0]?.count ?? 0) > 0) return;
-  const rows: (typeof analytics.$inferInsert)[] = [];
-  let followers = 1211;
-  for (let i = 13; i >= 1; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    followers += rand(4, 24);
-    rows.push({
-      date: todayKey(d),
-      followers,
-      totalLikes: rand(35, 240),
-      totalComments: rand(3, 42),
-      postsCount: Math.random() > 0.3 ? rand(1, 2) : 0,
-    });
-  }
-  await db.insert(analytics).values(rows);
-}
+/**
+ * Демо-данные больше НЕ генерируются: вся статистика приходит из VK API.
+ * История графиков накапливается из реальных замеров (одна строка в день).
+ */
 
 export async function seedWelcomeChatIfEmpty() {
   const c = await db
