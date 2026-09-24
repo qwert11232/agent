@@ -35,15 +35,35 @@ docker compose up --build
 Сайт будет доступен по постоянной ссылке, компьютер можно выключать.
 
 1. **База (бесплатно):** https://neon.tech → Sign Up → Create project →
-   скопируйте строку подключения `postgresql://…`
-2. **Код на GitHub:** https://github.com → Sign Up → New repository →
-   загрузите файлы проекта (uploading an existing file)
+   скопируйте строку подключения **Direct connection** (хост **без** `-pooler`,
+   с `?sslmode=require`), вида:
+   `postgresql://user:pass@ep-xxx.eu-central-1.aws.neon.tech/neondb?sslmode=require`
+2. **Код на GitHub:** https://github.com → Sign Up → New repository
+   (название — `ai-vk-smm-manager`, без пробелов и скобок) →
+   загрузите файлы проекта. Файл `.env` в репозиторий **не попадёт** —
+   он защищён `.gitignore`.
 3. **Публикация (бесплатно):** https://vercel.com → Sign Up через GitHub →
    Add New → Project → выберите репозиторий
-4. В настройках проекта добавьте:
-   - **Environment Variable:** `DATABASE_URL` = строка из шага 1
-   - **Build Command** (вместо стандартной): `npx drizzle-kit push --force && next build`
-5. Deploy → через 2 минуты получите ссылку вида `https://ваш-проект.vercel.app`
+4. **Environment Variables** → добавьте `DATABASE_URL` = строка из шага 1,
+   галочки **Production + Preview + Development** (все три).
+   Лишние переменные удалите.
+5. **Build Command не трогайте** — остаётся `next build` (по умолчанию).
+   Таблицы приложение создаст само при первом запросе
+   (`CREATE TABLE IF NOT EXISTS`), сборка БД не касается.
+6. **Root Directory** = `ai-vk-smm-manager` (если загружали в корень — пусто).
+7. **Deploy** → через 2 минуты откройте ссылку вида
+   `https://ваш-проект.vercel.app` и сразу **обновите страницу один раз**
+   (первый заход создаёт таблицы).
+
+### Схема БД вручную (альтернатива авто-созданию)
+
+Если у вас есть компьютер с Node.js, схему можно применить заранее одной командой:
+
+```bash
+DATABASE_URL="postgresql://…-neon.tech/neondb?sslmode=require" npm run db:push
+```
+
+Проверить таблицы: Neon → SQL Editor → `SELECT * FROM settings;`
 
 ## После запуска (любой способ)
 

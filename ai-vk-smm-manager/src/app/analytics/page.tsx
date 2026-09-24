@@ -2,11 +2,12 @@ import { asc } from "drizzle-orm";
 import { db } from "@/db";
 import { analytics, posts } from "@/db/schema";
 import AnalyticsClient from "@/components/pages/analytics-client";
-import { seedAnalyticsIfEmpty, todayKey } from "@/lib/core";
+import { ensureSchema, seedAnalyticsIfEmpty, todayKey } from "@/lib/core";
 
 export const dynamic = "force-dynamic";
 
 export default async function AnalyticsPage() {
+  await ensureSchema();
   await seedAnalyticsIfEmpty();
   const [allPosts, rows] = await Promise.all([
     db.select().from(posts),

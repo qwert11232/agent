@@ -1,6 +1,73 @@
-import { db } from "@/db";
+import { db, pool } from "@/db";
 import { activityLog, analytics, chatMessages, settings } from "@/db/schema";
 import { sql } from "drizzle-orm";
+
+/**
+ * Идемпотентная схема БД. Применяется один раз на инстанс при первом запросе —
+ * поэтому деплой на Vercel не требует drizzle-kit push в Build Command.
+ * CREATE TABLE IF NOT EXISTS повторно ничего не ломает и не замедляет.
+ */
+const SCHEMA_DDL = `
+CREATE TABLE IF NOT EXISTS settings (
+  id SERIAL PRIMARY KEY,
+  vk_token TEXT NOT NULL DEFAULT '',
+  gpt_key TEXT NOT NULL DEFAULT '',
+  group_id TEXT NOT NULL DEFAULT '',
+  instruction TEXT NOT NULL DEFAULT '',
+  schedule_times TEXT NOT NULL DEFAULT '12:00,18:00',
+  tone TEXT NOT NULL DEFAULT 'friendly',
+  active BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS posts (
+  id SERIAL PRIMARY KEY,
+  text TEXT NOT NULL,
+  vk_post_id TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  published_at TIMESTAMPTZ,
+  likes INTEGER NOT NULL DEFAULT 0,
+  comments INTEGER NOT NULL DEFAULT 0,
+  views INTEGER NOT NULL DEFAULT 0,
+  reposts INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id SERIAL PRIMARY KEY,
+  sender TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS activity_log (
+  id SERIAL PRIMARY KEY,
+  action TEXT NOT NULL,
+  details TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'success',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS analytics (
+  id SERIAL PRIMARY KEY,
+  date TEXT NOT NULL,
+  followers INTEGER NOT NULL DEFAULT 0,
+  total_likes INTEGER NOT NULL DEFAULT 0,
+  total_comments INTEGER NOT NULL DEFAULT 0,
+  posts_count INTEGER NOT NULL DEFAULT 0
+);
+`;
+
+let schemaPromise: Promise<void> | null = null;
+
+export function ensureSchema(): Promise<void> {
+  if (!schemaPromise) {
+    schemaPromise = pool
+      .query(SCHEMA_DDL)
+      .then(() => undefined)
+      .catch((err) => {
+        schemaPromise = null; // повторим при следующем запросе
+        throw err;
+      });
+  }
+  return schemaPromise;
+}
 
 export function rand(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -19,6 +86,7 @@ export function todayKey(d = new Date()) {
 
 /** Singleton-строка настроек (id всегда одна). */
 export async function getSettings() {
+  await ensureSchema();
   const rows = await db.select().from(settings).limit(1);
   if (rows[0]) return rows[0];
   const created = await db

@@ -2,13 +2,14 @@ import { asc, desc, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { analytics, chatMessages, posts } from "@/db/schema";
-import { getSettings, logActivity, todayKey } from "@/lib/core";
+import { ensureSchema, getSettings, logActivity, todayKey } from "@/lib/core";
 import { chatBotReply } from "@/lib/gpt";
 import { fetchVkGroupInfo, isRealVkToken } from "@/lib/vk";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  await ensureSchema();
   const rows = await db
     .select()
     .from(chatMessages)

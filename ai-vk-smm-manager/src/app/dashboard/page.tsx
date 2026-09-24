@@ -2,11 +2,12 @@ import { desc } from "drizzle-orm";
 import { db } from "@/db";
 import { activityLog, analytics, posts } from "@/db/schema";
 import DashboardClient from "@/components/pages/dashboard-client";
-import { getSettings } from "@/lib/core";
+import { ensureSchema, getSettings } from "@/lib/core";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
+  await ensureSchema();
   const [s, allPosts, activity, lastAnalytics] = await Promise.all([
     getSettings(),
     db.select().from(posts).orderBy(desc(posts.id)).limit(50),

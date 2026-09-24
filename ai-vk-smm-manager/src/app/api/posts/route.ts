@@ -3,11 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { posts } from "@/db/schema";
 import { generateDraft } from "@/lib/actions";
-import { logActivity } from "@/lib/core";
+import { ensureSchema, logActivity } from "@/lib/core";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  await ensureSchema();
   const rows = await db.select().from(posts).orderBy(desc(posts.id)).limit(100);
   return NextResponse.json({ posts: rows });
 }

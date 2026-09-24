@@ -2,10 +2,12 @@ import { desc } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { activityLog } from "@/db/schema";
+import { ensureSchema } from "@/lib/core";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  await ensureSchema();
   const rows = await db
     .select()
     .from(activityLog)
