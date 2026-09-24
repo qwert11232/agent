@@ -25,21 +25,100 @@ export function cleanGroupId(groupId: string) {
   return groupId.replace(/[^0-9]/g, "");
 }
 
+/**
+ * Загрузка картинки на стену группы: getWallUploadServer → upload → saveWallPhoto.
+ * Возвращает attachment вида photo-123_456.
+ */
+export async function vkUploadWallPhoto(opts: {
+  token: string;
+  groupId: string;
+  imageUrl: string;
+}): Promise<string | null> {
+  const gid = cleanGroupId(opts.groupId);
+  if (!isRealVkToken(opts.token) || !gid) return null;
+  try {
+    const { fetchImageBuffer } = await import("./research");
+    const img = await fetchImageBuffer(opts.imageUrl);
+    if (!img) return null;
+
+    const srvRes = await fetch(
+      `${VK_API}/photos.getWallUploadServer?group_id=${gid}&v=${VK_VERSION}`,
+      {
+        headers: { Authorization: `Bearer ${opts.token.trim()}` },
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    const srv = (await srvRes.json()) as { response?: { upload_url?: string } };
+    const uploadUrl = srv.response?.upload_url;
+    if (!uploadUrl) return null;
+
+    const form = new FormData();
+    form.append(
+      "photo",
+      new Blob([img.buffer], { type: img.contentType }),
+      "post.jpg",
+    );
+    const upRes = await fetch(uploadUrl, {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(30000),
+    });
+    const up = (await upRes.json()) as {
+      server?: number;
+      photo?: string;
+      hash?: string;
+    };
+    if (!up.photo || !up.hash || up.server == null) return null;
+
+    const saveParams = new URLSearchParams({
+      group_id: gid,
+      server: String(up.server),
+      photo: up.photo,
+      hash: up.hash,
+      v: VK_VERSION,
+    });
+    const saveRes = await fetch(`${VK_API}/photos.saveWallPhoto`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${opts.token.trim()}` },
+      body: saveParams,
+      signal: AbortSignal.timeout(15000),
+    });
+    const saved = (await saveRes.json()) as {
+      response?: { id?: number; owner_id?: number }[];
+    };
+    const photo = saved.response?.[0];
+    if (!photo?.id || photo.owner_id == null) return null;
+    return `photo${photo.owner_id}_${photo.id}`;
+  } catch {
+    return null;
+  }
+}
+
 /** wall.post — публикация на стену сообщества (или симуляция в demo-режиме). */
 export async function vkPublishPost(opts: {
   token: string;
   groupId: string;
   text: string;
+  imageUrl?: string | null;
 }): Promise<PublishResult> {
   if (looksLikeDemoToken(opts.token) || !cleanGroupId(opts.groupId)) {
     return { ok: true, postId: String(rand(10_000_000, 99_999_999)), simulated: true };
   }
   try {
+    const attachment = opts.imageUrl
+      ? await vkUploadWallPhoto({
+          token: opts.token,
+          groupId: opts.groupId,
+          imageUrl: opts.imageUrl,
+        })
+      : null;
+
     const params = new URLSearchParams({
       owner_id: `-${cleanGroupId(opts.groupId)}`,
       message: opts.text,
       from_group: "1",
       v: VK_VERSION,
+      ...(attachment ? { attachments: attachment } : {}),
     });
     const res = await fetch(`${VK_API}/wall.post?${params.toString()}`, {
       method: "POST",

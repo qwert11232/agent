@@ -261,13 +261,16 @@ export default function AnalyticsClient({
                   <td className="text-muted">#{p.id}</td>
                   <td className="max-w-[340px]">
                     <span className="line-clamp-1 text-ink">{p.text}</span>
-                    <span className="text-sm text-muted">vk id: {p.vkPostId}</span>
+                    <span className="text-sm text-muted">
+                      vk id: {p.vkPostId}
+                      {p.statsSyncedAt ? "" : " · нет данных из VK"}
+                    </span>
                   </td>
                   <td className="whitespace-nowrap text-muted">{fmt.dateTime(p.publishedAt)}</td>
-                  <td className="text-center text-pink-deep">{fmt.num(p.likes)}</td>
-                  <td className="text-center text-cyan-deep">{fmt.num(p.comments)}</td>
-                  <td className="text-center text-yellow-deep">{fmt.num(p.views)}</td>
-                  <td className="text-center text-neon-dim">{fmt.num(p.reposts)}</td>
+                  <td className="text-center text-pink-deep">{p.statsSyncedAt ? fmt.num(p.likes) : "—"}</td>
+                  <td className="text-center text-cyan-deep">{p.statsSyncedAt ? fmt.num(p.comments) : "—"}</td>
+                  <td className="text-center text-yellow-deep">{p.statsSyncedAt ? fmt.num(p.views) : "—"}</td>
+                  <td className="text-center text-neon-dim">{p.statsSyncedAt ? fmt.num(p.reposts) : "—"}</td>
                 </tr>
               ))}
             </tbody>

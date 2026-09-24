@@ -2,6 +2,9 @@
 
 import {
   CalendarClock,
+  Globe,
+  Image as ImageIcon,
+  Sparkles,
   CheckCircle2,
   FlaskConical,
   KeyRound,
@@ -56,6 +59,9 @@ export default function SettingsClient({ initial }: { initial: Settings }) {
     initial.scheduleTimes.split(",").map((t) => t.trim()).filter(Boolean),
   );
   const [active, setActive] = useState(initial.active);
+  const [catchUp, setCatchUp] = useState(initial.catchUpMinutes);
+  const [useWebSearch, setUseWebSearch] = useState(initial.useWebSearch);
+  const [useImages, setUseImages] = useState(initial.useImages);
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -71,7 +77,13 @@ export default function SettingsClient({ initial }: { initial: Settings }) {
       await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, scheduleTimes: times.join(",") }),
+        body: JSON.stringify({
+          ...form,
+          scheduleTimes: times.join(","),
+          catchUpMinutes: catchUp,
+          useWebSearch,
+          useImages,
+        }),
       });
       setSaved(true);
       router.refresh();
@@ -241,6 +253,66 @@ export default function SettingsClient({ initial }: { initial: Settings }) {
             </button>
           ) : null}
         </div>
+
+        <div className="mt-5 border-t-[3px] border-line pt-4">
+          <label className="field-label">
+            Окно догона: {catchUp === 0 ? "выключено" : `${catchUp} мин`}
+          </label>
+          <p className="mb-3 text-base text-muted">
+            Если бот «проспал» слот (сайт был закрыт), он опубликует пост только в
+            течение этого времени после слота. Позже — слот пропускается, чтобы пост
+            не вышел глубокой ночью.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {[0, 15, 30, 60, 120, 240].map((m) => (
+              <button
+                key={m}
+                onClick={() => setCatchUp(m)}
+                className={`btn btn-sm ${catchUp === m ? "btn-violet" : "btn-ghost"}`}
+              >
+                {m === 0 ? "выкл" : `${m} мин`}
+              </button>
+            ))}
+          </div>
+        </div>
+      </Panel>
+
+      {/* ============ SUPERPOWERS ============ */}
+      <Panel title="Возможности генератора" icon={Sparkles}>
+        <div className="grid gap-3 md:grid-cols-2">
+          <button
+            onClick={() => setUseWebSearch((v) => !v)}
+            className={`btn flex-col !items-start gap-1.5 !normal-case !tracking-normal ${
+              useWebSearch ? "btn-cyan" : "btn-ghost"
+            }`}
+            style={{ padding: "14px 16px" }}
+          >
+            <span className="flex items-center gap-2 font-display text-[9px] uppercase tracking-widest">
+              <Globe size={13} /> {useWebSearch ? "▣" : "▢"} Поиск в интернете
+            </span>
+            <span className="text-left font-pixel text-sm opacity-90">
+              Бот ищет свежие факты и пишет пост по ним, добавляя источники.
+            </span>
+          </button>
+          <button
+            onClick={() => setUseImages((v) => !v)}
+            className={`btn flex-col !items-start gap-1.5 !normal-case !tracking-normal ${
+              useImages ? "btn-pink" : "btn-ghost"
+            }`}
+            style={{ padding: "14px 16px" }}
+          >
+            <span className="flex items-center gap-2 font-display text-[9px] uppercase tracking-widest">
+              <ImageIcon size={13} /> {useImages ? "▣" : "▢"} Генерация картинок
+            </span>
+            <span className="text-left font-pixel text-sm opacity-90">
+              К каждому посту рисуется иллюстрация и грузится на стену VK.
+            </span>
+          </button>
+        </div>
+        <p className="mt-3 text-sm text-muted">
+          Обе функции бесплатны и не требуют ключей. Для более качественного поиска
+          можно задать переменную окружения TAVILY_API_KEY.
+        </p>
       </Panel>
 
       {/* ============ SAVE ============ */}

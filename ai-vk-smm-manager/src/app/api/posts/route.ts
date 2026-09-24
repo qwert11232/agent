@@ -19,6 +19,12 @@ export async function POST(req: NextRequest) {
     topic?: string;
     text?: string;
     count?: number;
+    withSearch?: boolean;
+    withImage?: boolean;
+  };
+  const genOpts = {
+    withSearch: body.withSearch,
+    withImage: body.withImage,
   };
 
   // Пакетная генерация: до 10 черновиков за раз.
@@ -26,7 +32,7 @@ export async function POST(req: NextRequest) {
   if (count > 1 && !body.text?.trim()) {
     const created = [];
     for (let i = 0; i < count; i++) {
-      created.push(await generateDraft(body.topic));
+      created.push(await generateDraft(body.topic, genOpts));
     }
     await logActivity(
       "ПАКЕТНАЯ ГЕНЕРАЦИЯ",
@@ -46,6 +52,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ post: row, mode: "manual" });
   }
 
-  const post = await generateDraft(body.topic);
+  const post = await generateDraft(body.topic, genOpts);
   return NextResponse.json({ post, mode: "generated" });
 }

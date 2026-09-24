@@ -16,6 +16,13 @@ export const settings = pgTable("settings", {
   scheduleTimes: text("schedule_times").notNull().default("12:00,18:00"),
   tone: text("tone").notNull().default("friendly"), // friendly | business | funny
   active: boolean("active").notNull().default(false),
+  // Последний отработанный слот в формате "YYYY-MM-DD HH:MM" — защита от
+  // публикаций «не вовремя» после долгого простоя.
+  lastSlotKey: text("last_slot_key").notNull().default(""),
+  // Максимальное опоздание публикации (минут). 0 = догон выключен.
+  catchUpMinutes: integer("catch_up_minutes").notNull().default(60),
+  useWebSearch: boolean("use_web_search").notNull().default(false),
+  useImages: boolean("use_images").notNull().default(false),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -31,6 +38,10 @@ export const posts = pgTable("posts", {
   comments: integer("comments").notNull().default(0),
   views: integer("views").notNull().default(0),
   reposts: integer("reposts").notNull().default(0),
+  // Когда метрики реально подтянулись из VK (null → цифр ещё нет).
+  statsSyncedAt: timestamp("stats_synced_at", { withTimezone: true }),
+  imageUrl: text("image_url"),
+  sources: text("sources"), // JSON-массив ссылок из веб-поиска
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

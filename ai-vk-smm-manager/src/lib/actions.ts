@@ -1,8 +1,14 @@
 import { and, asc, desc, eq, gte } from "drizzle-orm";
 import { db, pool } from "@/db";
-import { analytics, posts } from "@/db/schema";
+import { analytics, posts, settings } from "@/db/schema";
 import { getSettings, logActivity, rand, todayKey } from "./core";
 import { generateVkPost } from "./gpt";
+import {
+  buildImageUrl,
+  formatSearchContext,
+  imagePromptFromPost,
+  webSearch,
+} from "./research";
 import {
   fetchVkGroupInfo,
   fetchVkPostStats,
@@ -10,19 +16,48 @@ import {
   vkPublishPost,
 } from "./vk";
 
-/** Генерация черновика через GPT (или mock) + сохранение в БД. */
-export async function generateDraft(topic?: string) {
+/** Генерация черновика: веб-поиск (опц.) → текст через AI → картинка (опц.). */
+export async function generateDraft(
+  topic?: string,
+  opts?: { withSearch?: boolean; withImage?: boolean },
+) {
   const s = await getSettings();
+  const useSearch = opts?.withSearch ?? s.useWebSearch;
+  const useImage = opts?.withImage ?? s.useImages;
+
+  let searchContext = "";
+  let sources: string | null = null;
+  if (useSearch) {
+    const query = topic?.trim() || s.instruction.slice(0, 120) || "новости недели";
+    const hits = await webSearch(query);
+    if (hits.length) {
+      searchContext = formatSearchContext(hits);
+      sources = JSON.stringify(hits.map((h) => ({ title: h.title, url: h.url })));
+    }
+  }
+
   const { text, usedModel } = await generateVkPost({
     instruction: s.instruction,
     tone: s.tone,
     topic,
     apiKey: s.gptKey,
+    searchContext,
   });
-  const row = (await db.insert(posts).values({ text, status: "draft" }).returning())[0];
+
+  const imageUrl = useImage ? buildImageUrl(imagePromptFromPost(text, topic)) : null;
+
+  const row = (
+    await db
+      .insert(posts)
+      .values({ text, status: "draft", imageUrl, sources })
+      .returning()
+  )[0];
+
   await logActivity(
     "ПОСТ СГЕНЕРИРОВАН",
-    `Черновик #${row.id} создан (${usedModel === "gpt" ? "GPT API" : "встроенный генератор"}).`,
+    `Черновик #${row.id} (${usedModel === "gpt" ? "AI" : "встроенный генератор"})` +
+      (searchContext ? " · с веб-поиском" : "") +
+      (imageUrl ? " · с картинкой" : ""),
   );
   return row;
 }
@@ -34,7 +69,12 @@ export async function publishPostById(id: number, opts?: { auto?: boolean }) {
   if (!post) throw new Error("Пост не найден");
   if (post.status === "published") return post;
 
-  const res = await vkPublishPost({ token: s.vkToken, groupId: s.groupId, text: post.text });
+  const res = await vkPublishPost({
+    token: s.vkToken,
+    groupId: s.groupId,
+    text: post.text,
+    imageUrl: post.imageUrl,
+  });
   if (!res.ok) {
     await db.update(posts).set({ status: "failed" }).where(eq(posts.id, id));
     await logActivity(
@@ -86,6 +126,19 @@ export function parseSchedule(scheduleTimes: string) {
 
 const TICK_LOCK_KEY = 707001;
 
+/** Фиксируем отработанный слот (храним последние 20 ключей). */
+async function markSlotDone(
+  settingsId: number,
+  current: string,
+  slotKey: string,
+) {
+  const keys = [...current.split(",").filter(Boolean), slotKey].slice(-20);
+  await db
+    .update(settings)
+    .set({ lastSlotKey: keys.join(",") })
+    .where(eq(settings.id, settingsId));
+}
+
 /**
  * Тик автопостинга: если слот расписания наступил и поста в нём нет —
  * берём старший черновик (или генерируем новый) и публикуем.
@@ -111,20 +164,43 @@ export async function runTickIfDue() {
       : now;
     const tzShiftMs = zNow.getTime() - now.getTime();
 
+    const grace = Math.max(0, s.catchUpMinutes) * 60_000;
+    const dayKey = `${zNow.getFullYear()}-${String(zNow.getMonth() + 1).padStart(2, "0")}-${String(zNow.getDate()).padStart(2, "0")}`;
+    const doneKeys = new Set(s.lastSlotKey.split(",").filter(Boolean));
+
     const slots = parseSchedule(s.scheduleTimes);
-    for (const slot of slots) {
+    // Идём от позднего слота к раннему: публикуем самый актуальный, а не старый.
+    for (const slot of [...slots].reverse()) {
+      const slotKey = `${dayKey} ${slot.raw}`;
+      if (doneKeys.has(slotKey)) continue;
+
       const slotStartZoned = new Date(zNow);
       slotStartZoned.setHours(slot.h, slot.m, 0, 0);
-      if (zNow < slotStartZoned) continue;
-      // Реальная (UTC) граница слота для сравнения с publishedAt.
-      const slotStart = new Date(slotStartZoned.getTime() - tzShiftMs);
+      if (zNow < slotStartZoned) continue; // ещё не наступил
 
+      const lateMs = zNow.getTime() - slotStartZoned.getTime();
+      // Слот просрочен сильнее окна догона — помечаем пропущенным, НЕ публикуем.
+      if (lateMs > grace) {
+        await markSlotDone(s.id, s.lastSlotKey, slotKey);
+        await logActivity(
+          "СЛОТ ПРОПУЩЕН",
+          `Слот ${slot.raw} просрочен на ${Math.round(lateMs / 60000)} мин (окно догона ${s.catchUpMinutes} мин) — публикация отменена.`,
+          "info",
+        );
+        continue;
+      }
+
+      // Страховка: если в этот слот уже что-то вышло — не дублируем.
+      const slotStart = new Date(slotStartZoned.getTime() - tzShiftMs);
       const posted = await db
         .select({ id: posts.id })
         .from(posts)
         .where(and(eq(posts.status, "published"), gte(posts.publishedAt, slotStart)))
         .limit(1);
-      if (posted.length) continue;
+      if (posted.length) {
+        await markSlotDone(s.id, s.lastSlotKey, slotKey);
+        continue;
+      }
 
       const draft = (
         await db
@@ -136,6 +212,7 @@ export async function runTickIfDue() {
       )[0];
       const target = draft ?? (await generateDraft());
       const published = await publishPostById(target.id, { auto: true });
+      await markSlotDone(s.id, s.lastSlotKey, slotKey);
       return { ran: true as const, slot: slot.raw, postId: published.id };
     }
     return { ran: false as const, reason: "no-slot-due" as const };
@@ -200,11 +277,24 @@ export async function refreshAllStats(opts?: { silent?: boolean }) {
   ]);
 
   let realApplied = 0;
+  let missing = 0;
   for (const p of published) {
     const real = p.vkPostId ? realStats?.get(p.vkPostId) : undefined;
-    if (!real) continue; // нет данных из VK → оставляем как есть, не выдумываем
-    await db.update(posts).set(real).where(eq(posts.id, p.id));
-    realApplied++;
+    if (real) {
+      await db
+        .update(posts)
+        .set({ ...real, statsSyncedAt: new Date() })
+        .where(eq(posts.id, p.id));
+      realApplied++;
+    } else {
+      // Поста нет в группе (демо-публикация или удалён) — обнуляем,
+      // чтобы в панели не висели цифры «из ниоткуда».
+      missing++;
+      await db
+        .update(posts)
+        .set({ likes: 0, comments: 0, views: 0, reposts: 0, statsSyncedAt: null })
+        .where(eq(posts.id, p.id));
+    }
   }
 
   const totals = await db.select().from(posts).where(eq(posts.status, "published"));
@@ -237,7 +327,9 @@ export async function refreshAllStats(opts?: { silent?: boolean }) {
   if (!opts?.silent) {
     await logActivity(
       "СТАТИСТИКА ОБНОВЛЕНА",
-      `VK wall.getById: обновлено постов ${realApplied} из ${published.length}${groupInfo?.followers != null ? `, подписчиков: ${groupInfo.followers}` : ""}.`,
+      `VK wall.getById: реальных постов ${realApplied} из ${published.length}` +
+        (missing ? `, не найдено в группе: ${missing}` : "") +
+        (groupInfo?.followers != null ? `, подписчиков: ${groupInfo.followers}` : ""),
       "info",
     );
   }

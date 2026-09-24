@@ -45,6 +45,12 @@ export async function POST(req: NextRequest) {
         instruction: String(body.instruction ?? ""),
         scheduleTimes: times.length ? times.join(",") : current.scheduleTimes,
         tone,
+        catchUpMinutes: Math.min(
+          720,
+          Math.max(0, Number(body.catchUpMinutes ?? current.catchUpMinutes) || 0),
+        ),
+        useWebSearch: Boolean(body.useWebSearch),
+        useImages: Boolean(body.useImages),
         updatedAt: new Date(),
       })
       .where(eq(settings.id, current.id))

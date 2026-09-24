@@ -12,5 +12,13 @@ export default async function PostsPage() {
     db.select().from(posts).orderBy(desc(posts.id)).limit(100),
     getSettings(),
   ]);
-  return <PostsClient initial={rows} tone={s.tone} groupId={s.groupId} />;
+  return (
+    <PostsClient
+      initial={rows}
+      tone={s.tone}
+      groupId={s.groupId}
+      defaultSearch={s.useWebSearch}
+      defaultImage={s.useImages}
+    />
+  );
 }

@@ -2,6 +2,9 @@
 
 import {
   CornerDownRight,
+  Globe,
+  ImageIcon,
+  Link2,
   Dices,
   ExternalLink,
   Eye,
@@ -45,6 +48,12 @@ function PostCard({
   const [expanded, setExpanded] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const long = post.text.length > 320;
+  let sourceList: { title: string; url: string }[] = [];
+  try {
+    if (post.sources) sourceList = JSON.parse(post.sources) as { title: string; url: string }[];
+  } catch {
+    sourceList = [];
+  }
 
   return (
     <article className="panel flex flex-col popin">
@@ -57,6 +66,17 @@ function PostCard({
       </div>
 
       <div className="flex-1 p-4">
+        {post.imageUrl ? (
+          <span className="mb-3 block overflow-hidden border-[3px] border-line bg-panel2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={post.imageUrl}
+              alt="Иллюстрация к посту"
+              loading="lazy"
+              className="h-48 w-full object-cover"
+            />
+          </span>
+        ) : null}
         <p className="whitespace-pre-wrap break-words text-lg leading-7 text-ink">
           {expanded || !long ? post.text : `${post.text.slice(0, 320)}…`}
         </p>
@@ -69,6 +89,29 @@ function PostCard({
           </button>
         ) : null}
 
+        {sourceList.length ? (
+          <div className="mt-3 border-t-[3px] border-line pt-2">
+            <span className="mb-1 block font-display text-[8px] uppercase tracking-widest text-muted">
+              Источники
+            </span>
+            <ul className="flex flex-col gap-0.5">
+              {sourceList.slice(0, 4).map((src, i) => (
+                <li key={i} className="truncate text-sm">
+                  <a
+                    href={src.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-cyan-deep hover:underline"
+                  >
+                    <Link2 size={11} className="mr-1 inline" />
+                    {src.title || src.url}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         {post.status === "published" ? (
           <div className="mt-3 grid grid-cols-4 gap-2 border-t-[3px] border-line pt-3 text-center">
             {[
@@ -79,7 +122,9 @@ function PostCard({
             ].map((s, i) => (
               <div key={i} className="flex flex-col items-center gap-1 border-r-2 border-line/40 last:border-0">
                 <s.icon size={14} className={s.c} />
-                <span className="font-display text-[10px] text-ink">{fmt.num(s.v)}</span>
+                <span className="font-display text-[10px] text-ink">
+                {post.statsSyncedAt ? fmt.num(s.v) : "—"}
+              </span>
               </div>
             ))}
           </div>
@@ -127,10 +172,14 @@ export default function PostsClient({
   initial,
   tone,
   groupId,
+  defaultSearch,
+  defaultImage,
 }: {
   initial: Post[];
   tone: string;
   groupId: string;
+  defaultSearch: boolean;
+  defaultImage: boolean;
 }) {
   const router = useRouter();
   const [posts, setPosts] = useState(initial);
@@ -140,6 +189,8 @@ export default function PostsClient({
   const [busyId, setBusyId] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [count, setCount] = useState(1);
+  const [withSearch, setWithSearch] = useState(defaultSearch);
+  const [withImage, setWithImage] = useState(defaultImage);
 
   async function generate(n = count) {
     setGenBusy(true);
@@ -148,7 +199,7 @@ export default function PostsClient({
       const res = await fetch("/api/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: topic || undefined, count: n }),
+        body: JSON.stringify({ topic: topic || undefined, count: n, withSearch, withImage }),
       });
       const data = (await res.json()) as { post: Post; posts?: Post[] };
       const created = data.posts ?? [data.post];
@@ -231,6 +282,20 @@ export default function PostsClient({
                 </button>
               ))}
               <span className="text-sm text-muted">максимум 10 за раз</span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setWithSearch((v) => !v)}
+                className={`btn btn-sm ${withSearch ? "btn-cyan" : "btn-ghost"}`}
+              >
+                <Globe size={12} /> {withSearch ? "▣" : "▢"} Поиск в интернете
+              </button>
+              <button
+                onClick={() => setWithImage((v) => !v)}
+                className={`btn btn-sm ${withImage ? "btn-pink" : "btn-ghost"}`}
+              >
+                <ImageIcon size={12} /> {withImage ? "▣" : "▢"} Картинка
+              </button>
             </div>
             <p className="mt-2 text-base text-muted">
               <CornerDownRight size={13} className="mr-1 inline text-neon-dim" />

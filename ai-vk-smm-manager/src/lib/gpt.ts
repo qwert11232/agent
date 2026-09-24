@@ -208,13 +208,17 @@ export async function generateVkPost(opts: {
   tone: string;
   topic?: string;
   apiKey?: string;
+  searchContext?: string;
 }): Promise<{ text: string; usedModel: "gpt" | "mock" }> {
   const key = resolveApiKey(opts.apiKey);
   if (key) {
     const system = `Ты — SMM-менеджер группы ВКонтакте. Тон общения: ${TONE_LABELS[opts.tone] ?? opts.tone}. Инструкция владельца: ${opts.instruction || "пиши полезные посты"}. Требования: напиши один пост 150–250 слов на русском языке, добавь уместные эмодзи и 4–8 хештегов в конце. Отвечай только текстом поста, без комментариев.`;
-    const user = opts.topic?.trim()
+    const base = opts.topic?.trim()
       ? `Тема поста: ${opts.topic.trim()}`
       : "Придумай актуальную тему сам, исходя из инструкции.";
+    const user = opts.searchContext?.trim()
+      ? `${base}\n\nСВЕЖИЕ ДАННЫЕ ИЗ ИНТЕРНЕТА (используй факты отсюда, не выдумывай):\n${opts.searchContext}`
+      : base;
     const out = await callAI(key, [
       { role: "system", content: system },
       { role: "user", content: user },
