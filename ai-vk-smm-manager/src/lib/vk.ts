@@ -1,0 +1,600 @@
+import { rand } from "./core";
+import { resolveProvider } from "./gpt";
+
+/** VK_API_BASE - свой прокси или тестовый сервер; по умолчанию боевой VK. */
+const VK_API = process.env.VK_API_BASE?.replace(/\/$/, "") || "https://api.vk.com/method";
+const VK_VERSION = "5.199";
+
+export type PublishResult = {
+  ok: boolean;
+  postId: string | null;
+  error?: string;
+  simulated: boolean;
+  /** Текст ошибки, если фото не прикрепилось (пост при этом опубликован). */
+  photoError?: string | null;
+};
+
+/** Код ошибки VK, означающий: метод недоступен с групповой авторизацией. */
+export const GROUP_AUTH_READ_LIMIT = 27;
+
+export function isReadLimitError(error: string | null | undefined) {
+  return !!error && error.includes("(код 27)");
+}
+
+function looksLikeDemoToken(token: string) {
+  const t = token.trim().toLowerCase();
+  return !t || t.startsWith("demo") || t.startsWith("test") || t.length < 10;
+}
+
+/** Есть ли боевой VK-токен (а не demo/пустой). */
+export function isRealVkToken(token: string) {
+  return !looksLikeDemoToken(token);
+}
+
+export function cleanGroupId(groupId: string) {
+  return groupId.replace(/[^0-9]/g, "");
+}
+
+/**
+ * Сервисный ключ VK-приложения (VK_SERVICE_TOKEN) — отдельный от токена сообщества.
+ * Нужен только для ЧТЕНИЯ чужих открытых стен (анализ конкурентов): токен сообщества
+ * это делать не может (код 27). Приоритет: поле в настройках → переменная окружения.
+ */
+export function resolveServiceToken(stored?: string | null) {
+  return (stored?.trim() || process.env.VK_SERVICE_TOKEN?.trim() || "").trim();
+}
+
+/** Вызов метода VK именно сервисным ключом (никогда не токеном группы). */
+export async function vkServiceApi<T = Record<string, unknown>>(
+  serviceToken: string,
+  method: string,
+  params: Record<string, string>,
+) {
+  return vkApiDetailed<T>(serviceToken, method, params);
+}
+
+/** Коды VK, означающие «сообщество закрыто / стена недоступна». */
+export function isClosedGroupError(error: string | null | undefined) {
+  return !!error && /\(код (15|18|30|203)\)/.test(error);
+}
+
+/** Код 5 / 28 — ключ недействителен: надо проверить сервисный ключ. */
+export function isInvalidKeyError(error: string | null | undefined) {
+  return !!error && /\(код (5|28)\)/.test(error);
+}
+
+/** Универсальный вызов метода VK API. null при ошибке/недоступности. */
+export async function vkApi<T = Record<string, unknown>>(
+  token: string,
+  method: string,
+  params: Record<string, string>,
+): Promise<T | null> {
+  const r = await vkApiDetailed<T>(token, method, params);
+  return r.ok ? r.data : null;
+}
+
+/** То же, но с текстом ошибки VK — нужен для диагностики загрузки фото. */
+export async function vkApiDetailed<T = Record<string, unknown>>(
+  token: string,
+  method: string,
+  params: Record<string, string>,
+): Promise<{ ok: boolean; data: T | null; error: string | null }> {
+  if (!isRealVkToken(token)) {
+    return { ok: false, data: null, error: "VK-токен не задан" };
+  }
+  try {
+    // access_token передаём параметром — так работает и с ключами сообщества,
+    // и с пользовательскими токенами (Bearer поддерживается не всеми методами).
+    const body = new URLSearchParams({
+      ...params,
+      access_token: token.trim(),
+      v: VK_VERSION,
+    });
+    const res = await fetch(`${VK_API}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = (await res.json()) as {
+      response?: T;
+      error?: { error_msg?: string; error_code?: number };
+    };
+    if (data.error) {
+      return {
+        ok: false,
+        data: null,
+        error: `${method}: ${data.error.error_msg ?? "ошибка"} (код ${data.error.error_code ?? "?"})`,
+      };
+    }
+    // VK иногда роняет тело ответа под нагрузкой → относимся как к временной ошибке.
+    if (data.response === undefined) {
+      return { ok: false, data: null, error: `${method}: пустой ответ API (временная ошибка)` };
+    }
+    return { ok: true, data: data.response as T | null, error: null };
+  } catch (e) {
+    return {
+      ok: false,
+      data: null,
+      error: `${method}: сеть недоступна (${e instanceof Error ? e.message : "timeout"})`,
+    };
+  }
+}
+
+export type UploadResult = { attachment: string | null; error: string | null };
+
+/**
+ * Загрузка фото на стену группы: getWallUploadServer → upload → saveWallPhoto.
+ * Принимает готовые байты (быстро) или URL (скачает сам).
+ * Возвращает attachment вида photo-123_456 либо текст ошибки.
+ */
+export async function vkUploadWallPhoto(opts: {
+  token: string;
+  groupId: string;
+  imageUrl?: string | null;
+  bytes?: ArrayBuffer | null;
+  mimeType?: string;
+}): Promise<UploadResult> {
+  const gid = cleanGroupId(opts.groupId);
+  if (!isRealVkToken(opts.token) || !gid) {
+    return { attachment: null, error: "нет боевого VK-токена или Group ID" };
+  }
+
+  // 1. Получаем байты картинки
+  let buffer = opts.bytes ?? null;
+  let mime = opts.mimeType ?? "image/jpeg";
+  if (!buffer) {
+    if (!opts.imageUrl) return { attachment: null, error: "картинка не задана" };
+    const { fetchImageBuffer } = await import("./research");
+    const img = await fetchImageBuffer(opts.imageUrl);
+    if (!img) {
+      return {
+        attachment: null,
+        error: "не удалось скачать картинку (генерация могла не успеть — попробуйте ещё раз)",
+      };
+    }
+    buffer = img.buffer;
+    mime = img.contentType;
+  }
+  if (buffer.byteLength < 100) {
+    return { attachment: null, error: "файл картинки пустой" };
+  }
+
+  // 2. Адрес сервера загрузки. Групповой токен VK не может грузить фото на стену
+  // (код 27) — тогда используем пользовательский токен админа (VK_USER_TOKEN).
+  const userToken = process.env.VK_USER_TOKEN?.trim();
+  let tok = opts.token;
+  let srv = await vkApiDetailed<{ upload_url?: string }>(tok, "photos.getWallUploadServer", {
+    group_id: gid,
+  });
+  if (!srv.data?.upload_url && userToken && srv.error?.includes("(код 27)")) {
+    tok = userToken;
+    srv = await vkApiDetailed<{ upload_url?: string }>(tok, "photos.getWallUploadServer", {
+      group_id: gid,
+    });
+  }
+  const uploadUrl = srv.data?.upload_url;
+  if (!uploadUrl) {
+    // group_id мы УЖЕ передаём (без минуса) — код 27 здесь не из-за него: VK не отдаёт
+    // photos.getWallUploadServer токену сообщества вообще. Нужен токен админа группы.
+    if (srv.error?.includes("(код 27)") && !userToken) {
+      return {
+        attachment: null,
+        error:
+          "VK запрещает токену сообщества загружать фото на стену (код 27, даже с group_id). " +
+          "Задайте VK_USER_TOKEN — токен администратора группы с правами photos, wall, groups, offline.",
+      };
+    }
+    return {
+      attachment: null,
+      error: srv.error ?? "VK не выдал upload_url (нужны права photos у токена)",
+    };
+  }
+
+  // 3. Отправка файла
+  let up: { server?: number; photo?: string; hash?: string; error?: string };
+  try {
+    const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+    const form = new FormData();
+    form.append("photo", new Blob([buffer], { type: mime }), `post.${ext}`);
+    const upRes = await fetch(uploadUrl, {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(45000),
+    });
+    up = (await upRes.json()) as typeof up;
+  } catch (e) {
+    return {
+      attachment: null,
+      error: `upload: ${e instanceof Error ? e.message : "ошибка отправки файла"}`,
+    };
+  }
+  // VK возвращает photo:"[]" когда файл не принят
+  if (!up.photo || up.photo === "[]" || !up.hash || up.server == null) {
+    return { attachment: null, error: `upload отклонён VK${up.error ? `: ${up.error}` : ""}` };
+  }
+
+  // 4. Сохранение фото
+  const saved = await vkApiDetailed<{ id?: number; owner_id?: number }[]>(
+    tok,
+    "photos.saveWallPhoto",
+    {
+      group_id: gid,
+      server: String(up.server),
+      photo: up.photo,
+      hash: up.hash,
+    },
+  );
+  const photo = saved.data?.[0];
+  if (!photo?.id || photo.owner_id == null) {
+    return { attachment: null, error: saved.error ?? "saveWallPhoto не вернул фото" };
+  }
+  return { attachment: `photo${photo.owner_id}_${photo.id}`, error: null };
+}
+
+export type PostponedItem = {
+  id: number;
+  date: number; // unix, время запланированной публикации
+  text: string;
+};
+
+/** Отложенные посты, уже стоящие в очереди VK (filter=postponed). */
+export type PostponedResult =
+  | { ok: true; items: PostponedItem[] }
+  | { ok: false; readLimited: boolean; error: string };
+
+/** Список отложенных постов VK. null-read недоступен у группового токена. */
+export async function vkGetPostponedResult(
+  token: string,
+  groupId: string,
+): Promise<PostponedResult> {
+  const gid = cleanGroupId(groupId);
+  if (!isRealVkToken(token) || !gid) {
+    return { ok: false, readLimited: true, error: "нет токена" };
+  }
+  const res = await vkApiDetailed<{ items?: { id: number; date: number; text?: string }[] }>(
+    token,
+    "wall.get",
+    { owner_id: `-${gid}`, filter: "postponed", count: "100" },
+  );
+  if (!res.ok) {
+    return {
+      ok: false,
+      readLimited: res.error?.includes("(код 27)") ?? false,
+      error: res.error ?? "метод недоступен",
+    };
+  }
+  return {
+    ok: true,
+    items: (res.data?.items ?? []).map((i) => ({
+      id: i.id,
+      date: i.date,
+      text: i.text ?? "",
+    })),
+  };
+}
+
+/** Старое имя — для обратной совместимости вызовов. */
+export async function vkGetPostponed(
+  token: string,
+  groupId: string,
+): Promise<PostponedItem[] | null> {
+  const gid = cleanGroupId(groupId);
+  if (!isRealVkToken(token) || !gid) return null;
+  const res = await vkApiDetailed<{ items?: PostponedItem[] }>(token, "wall.get", {
+    owner_id: `-${gid}`,
+    filter: "postponed",
+    count: "100",
+  });
+  if (!res.ok) return null;
+  return (res.data?.items ?? []).map((i) => ({
+    id: i.id,
+    date: i.date,
+    text: i.text ?? "",
+  }));
+}
+
+/** Удалить отложенный пост из очереди VK. */
+export async function vkDeletePost(token: string, groupId: string, postId: string) {
+  const gid = cleanGroupId(groupId);
+  if (!gid) return false;
+  const r = await vkApiDetailed(token, "wall.delete", {
+    owner_id: `-${gid}`,
+    post_id: postId,
+  });
+  return r.ok;
+}
+
+/** wall.post — публикация на стену сообщества (или симуляция в demo-режиме). */
+export async function vkPublishPost(opts: {
+  token: string;
+  groupId: string;
+  text: string;
+  imageUrl?: string | null;
+  imageBytes?: ArrayBuffer | null;
+  imageMime?: string;
+  /** Несколько картинок (карусель): до 10 слайдов в одном посте. */
+  images?: { bytes: ArrayBuffer; mime: string }[];
+  /** Unix-время отложенной публикации — VK опубликует сам точно в срок. */
+  publishAt?: number | null;
+}): Promise<PublishResult> {
+  if (looksLikeDemoToken(opts.token) || !cleanGroupId(opts.groupId)) {
+    return { ok: true, postId: String(rand(10_000_000, 99_999_999)), simulated: true };
+  }
+  try {
+    let attachment: string | null = null;
+    let photoError: string | null = null;
+    if (opts.images?.length) {
+      const list: string[] = [];
+      const errs: string[] = [];
+      for (const img of opts.images.slice(0, 10)) {
+        const up = await vkUploadWallPhoto({
+          token: opts.token,
+          groupId: opts.groupId,
+          bytes: img.bytes,
+          mimeType: img.mime,
+        });
+        if (up.attachment) list.push(up.attachment);
+        else if (up.error) errs.push(up.error);
+        await new Promise((r) => setTimeout(r, 350)); // лимит VK ~3 зап/сек
+      }
+      if (!list.length) {
+        // Карусель без слайдов не публикуем — выйдет пустой пост с текстом «листайте».
+        return {
+          ok: false,
+          postId: null,
+          simulated: false,
+          error:
+            `Слайды не загрузились: ${errs[0] ?? "неизвестная ошибка"}. ` +
+            `Групповой токен VK не умеет грузить фото — задайте VK_USER_TOKEN (токен админа группы с правами photos, wall).`,
+        };
+      }
+      attachment = list.join(",");
+      photoError = errs.length ? `слайдов не загружено: ${errs.length} из ${opts.images.length} (${errs[0]})` : null;
+    } else if (opts.imageUrl || opts.imageBytes) {
+      const up = await vkUploadWallPhoto({
+        token: opts.token,
+        groupId: opts.groupId,
+        imageUrl: opts.imageUrl,
+        bytes: opts.imageBytes,
+        mimeType: opts.imageMime,
+      });
+      attachment = up.attachment;
+      photoError = up.error;
+    }
+
+    const params = new URLSearchParams({
+      owner_id: `-${cleanGroupId(opts.groupId)}`,
+      message: opts.text,
+      from_group: "1",
+      v: VK_VERSION,
+      ...(attachment ? { attachments: attachment } : {}),
+      ...(opts.publishAt ? { publish_date: String(opts.publishAt) } : {}),
+    });
+    params.append("access_token", opts.token.trim());
+    const res = await fetch(`${VK_API}/wall.post`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params,
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = (await res.json()) as {
+      response?: { post_id?: number };
+      error?: { error_msg?: string };
+    };
+    if (data.response?.post_id) {
+      return {
+        ok: true,
+        postId: String(data.response.post_id),
+        simulated: false,
+        photoError,
+      };
+    }
+    return {
+      ok: false,
+      postId: null,
+      error: data.error?.error_msg ?? "Неизвестная ошибка VK API",
+      simulated: false,
+    };
+  } catch {
+    // Сеть недоступна из песочницы → безопасная симуляция.
+    return { ok: true, postId: String(rand(10_000_000, 99_999_999)), simulated: true };
+  }
+}
+
+/** Проверка токена через groups.getById. */
+export async function validateVkToken(
+  token: string,
+  groupId: string,
+): Promise<{ ok: boolean; simulated: boolean; message: string }> {
+  if (looksLikeDemoToken(token)) {
+    return {
+      ok: false,
+      simulated: true,
+      message: "Токен не задан — бот работает в режиме симуляции (demo).",
+    };
+  }
+  try {
+    const gid = cleanGroupId(groupId) || "1";
+    const res = await fetch(
+      `${VK_API}/groups.getById?group_id=${gid}&v=${VK_VERSION}`,
+      {
+        headers: { Authorization: `Bearer ${token.trim()}` },
+        signal: AbortSignal.timeout(8000),
+      },
+    );
+    const data = (await res.json()) as {
+      response?: { groups?: { name?: string }[] };
+      error?: { error_msg?: string };
+    };
+    if (data.response?.groups?.length) {
+      const perms = await vkApiDetailed<{
+        mask?: number;
+        permissions?: { name?: string }[];
+      }>(token.trim(), "groups.getTokenPermissions", {});
+      const names = (perms.data?.permissions ?? [])
+        .map((x) => x.name)
+        .filter(Boolean)
+        .join(", ");
+      return {
+        ok: true,
+        simulated: false,
+        message:
+          `VK API OK: сообщество «${data.response.groups[0].name}», токен группы. ` +
+          `Разрешения: ${names || "нет данных"}. Постинг работает; чтение стены у VK для ` +
+          `групповых токенов закрыто — статистика лайков/просмотров недоступна, подписчики доступны.`,
+      };
+    }
+    return {
+      ok: false,
+      simulated: false,
+      message: `VK API вернул ошибку: ${data.error?.error_msg ?? "нет доступа"}`,
+    };
+  } catch {
+    return {
+      ok: false,
+      simulated: true,
+      message: "VK API недоступен из сети — операции будут симулироваться.",
+    };
+  }
+}
+
+/** Проверка ключа AI (OpenAI sk-… или Groq gsk_…) через /models. */
+export async function validateGptKey(
+  key: string,
+): Promise<{ ok: boolean; simulated: boolean; message: string }> {
+  const k = key.trim();
+  if (!k) {
+    return {
+      ok: false,
+      simulated: true,
+      message: "Ключ не задан: без него посты, карусели и дайджест не генерируются (заглушек вместо текста нет).",
+    };
+  }
+  if (!k.startsWith("sk-") && !k.startsWith("gsk_")) {
+    return {
+      ok: false,
+      simulated: false,
+      message: "Ключ не распознан: ожидается OpenAI (sk-…) или Groq (gsk_…).",
+    };
+  }
+  const provider = resolveProvider(k);
+  try {
+    const res = await fetch(`${provider.baseUrl}/models`, {
+      headers: { Authorization: `Bearer ${k}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) {
+      return {
+        ok: true,
+        simulated: false,
+        message: `${provider.name} API OK: ключ принят, модель ${provider.models[0]} доступна.`,
+      };
+    }
+    return {
+      ok: false,
+      simulated: false,
+      message: `${provider.name} API отклонил ключ (HTTP ${res.status}).`,
+    };
+  } catch {
+    return {
+      ok: false,
+      simulated: true,
+      message: `${provider.name} API недоступен из сети — генерация не сработает, пока провайдер недоступен.`,
+    };
+  }
+}
+
+/** Реальные подписчики и название группы — groups.getById + members_count. */
+export async function fetchVkGroupInfo(
+  token: string,
+  groupId: string,
+): Promise<{ name: string | null; followers: number | null } | null> {
+  if (!isRealVkToken(token)) return null;
+  try {
+    const gid = cleanGroupId(groupId);
+    if (!gid) return null;
+    const res = await fetch(
+      `${VK_API}/groups.getById?group_id=${gid}&fields=members_count&v=${VK_VERSION}`,
+      {
+        headers: { Authorization: `Bearer ${token.trim()}` },
+        signal: AbortSignal.timeout(9000),
+      },
+    );
+    const data = (await res.json()) as {
+      response?: { groups?: { name?: string; members_count?: number }[] };
+    };
+    const group = data.response?.groups?.[0];
+    if (!group) return null;
+    return {
+      name: group.name ?? null,
+      followers: typeof group.members_count === "number" ? group.members_count : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type RealPostStats = {
+  likes: number;
+  comments: number;
+  views: number;
+  reposts: number;
+};
+
+/** Реальная статистика постов — wall.getById батчами по 100. */
+export async function fetchVkPostStats(
+  token: string,
+  groupId: string,
+  vkPostIds: string[],
+): Promise<Map<string, RealPostStats> | null> {
+  if (!isRealVkToken(token) || !vkPostIds.length) return null;
+  const gid = cleanGroupId(groupId);
+  if (!gid) return null;
+  const map = new Map<string, RealPostStats>();
+  try {
+    for (let i = 0; i < vkPostIds.length; i += 100) {
+      const chunk = vkPostIds
+        .slice(i, i + 100)
+        .map((id) => `-${gid}_${id}`)
+        .join(",");
+      const res = await fetch(
+        `${VK_API}/wall.getById?posts=${encodeURIComponent(chunk)}&v=${VK_VERSION}`,
+        {
+          headers: { Authorization: `Bearer ${token.trim()}` },
+          signal: AbortSignal.timeout(9000),
+        },
+      );
+      const data = (await res.json()) as {
+        response?: {
+          items?: {
+            id: number;
+            likes?: { count: number };
+            comments?: { count: number };
+            views?: { count: number };
+            reposts?: { count: number };
+          }[];
+        };
+      };
+      if (i + 100 < vkPostIds.length) {
+        await new Promise((r) => setTimeout(r, 400)); // лимит VK ~3 зап/сек
+      }
+      for (const item of data.response?.items ?? []) {
+        map.set(String(item.id), {
+          likes: item.likes?.count ?? 0,
+          comments: item.comments?.count ?? 0,
+          views: item.views?.count ?? 0,
+          reposts: item.reposts?.count ?? 0,
+        });
+      }
+    }
+    return map.size ? map : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Симуляция метрик удалена намеренно: показываем только реальные данные VK.
+ * Без боевого токена метрики остаются нулевыми, а UI сообщает, что нужен токен.
+ */
